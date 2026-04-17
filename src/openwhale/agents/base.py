@@ -11,11 +11,16 @@ from loguru import logger
 from mcp import ClientSession
 
 from ..util.cache import ResultCache
+from ..util.context_manager import ContextManager
 from ..util.mcp_client import call_tool, list_tools
-from ..util.notes import PentestNotes
+from ..util.notes import GlobalIntel, PentestNotes
 from ..util.poc_index import PocIndex
 from ..util.vuln_kb import VulnKnowledgeBase
 from .prompts import MISSION_PROMPT, SYSTEM_PROMPT
+
+# 断网比赛环境中，LiteLLM 尝试访问外网获取模型成本表会超时卡死
+import os as _os
+_os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 MAX_ITERATIONS_DEFAULT = 50
 
@@ -52,6 +57,7 @@ class BaseChallengeAgent(ABC):
         cache: ResultCache | None = None,
         vuln_kb: VulnKnowledgeBase | None = None,
         poc_index: PocIndex | None = None,
+        intel: GlobalIntel | None = None,
     ) -> None:
         self.model_name = model_name
         self.max_iterations = max_iterations
@@ -60,7 +66,9 @@ class BaseChallengeAgent(ABC):
         self.cache = cache or ResultCache()
         self.vuln_kb = vuln_kb or VulnKnowledgeBase()
         self.poc_index = poc_index or PocIndex()
+        self.intel = intel or GlobalIntel()
         self._submit_failures: dict[str, int] = {}
+        self._ctx_manager = ContextManager()
 
     def _emit(self, role: str, content: str) -> None:
         logger.info(f"[{role.upper()}] {content[:200]}{'...' if len(content) > 200 else ''}")
@@ -123,6 +131,11 @@ class BaseChallengeAgent(ABC):
         for iteration in range(self.max_iterations):
             iteration_count = iteration + 1
             logger.debug(f"迭代轮次: {iteration_count}/{self.max_iterations}")
+
+            if self._ctx_manager.should_compact(messages):
+                stats = self._ctx_manager.get_stats(messages)
+                self._emit("system", f"[上下文管理] 触发压缩: {stats['estimated_tokens']} tokens / {stats['context_window']} 窗口")
+                messages = self._ctx_manager.compact(messages, keep_last_n=8)
 
             assistant_text, tool_calls = await self.complete_turn(messages, model_tools)
             assistant_message: dict[str, Any] = {"role": "assistant", "content": assistant_text or None}
@@ -192,6 +205,7 @@ class BaseChallengeAgent(ABC):
             ),
             "search_poc_kb": lambda: self.poc_index.search(args.get("query", "")),
             "read_poc_file": lambda: self.poc_index.read_file(args.get("filepath", "")),
+            "auto_recon": lambda: f"auto_recon 已移除。请用 Bash(curl/python3) 手动执行侦察步骤。",
         }
 
         handler = local_handlers.get(name)
@@ -414,7 +428,7 @@ LOCAL_TOOLS_OPENAI_FORMAT: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "auto_recon",
-            "description": "对目标执行自动化深度侦察（JS分析+漏扫+泄露检测），返回结构化报告。一次调用即可完成完整侦察，无需手动逐步执行。",
+            "description": "[已废弃] 请用 Bash(curl/python3) 手动执行侦察步骤。",
             "parameters": {
                 "type": "object",
                 "properties": {

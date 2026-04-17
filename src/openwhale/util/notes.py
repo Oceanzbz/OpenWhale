@@ -57,7 +57,7 @@ class PentestNotes:
         for cat, notes in ch.items():
             parts.append(f"\n## {cat}")
             for n in notes:
-                parts.append(f"  - [{n.get('ts','')}] {n['content']}")
+                parts.append(f"  - [{n.get('ts','')}] {n.get('content', str(n))}")
         return "\n".join(parts)
 
     def get_all_notes_summary(self) -> str:
@@ -93,7 +93,7 @@ class PentestNotes:
         for key, entries in g.items():
             parts.append(f"\n## {key}")
             for e in entries:
-                parts.append(f"  - [{e.get('ts','')}] {e['content']}")
+                parts.append(f"  - [{e.get('ts','')}] {e.get('content', str(e))}")
         return "\n".join(parts)
 
     # ── Flag 记录 ───────────────────────────────────────────────
@@ -109,6 +109,13 @@ class PentestNotes:
     def is_solved(self, code: str) -> bool:
         with self._lock:
             return code in self._data.get("solved_flags", {})
+
+    def clear_solved(self, code: str) -> None:
+        """清除本地 solved 记录（用于平台数据校准）。"""
+        with self._lock:
+            if code in self._data.get("solved_flags", {}):
+                del self._data["solved_flags"][code]
+                self._save()
 
     def get_solved_codes(self) -> set[str]:
         with self._lock:
@@ -131,3 +138,91 @@ class PentestNotes:
         with self._lock:
             ch = self._data.get("challenges", {}).get(code, {})
             return list(ch.get("_attempts", []))
+
+
+class GlobalIntel:
+    """Cross-challenge intelligence sharing layer.
+
+    Stores credentials, tech stacks, working exploits, and common patterns
+    discovered across all challenges so the strategy agent can route info
+    to relevant sub-agents.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._credentials: list[dict[str, str]] = []
+        self._tech_stacks: dict[str, list[str]] = {}
+        self._working_exploits: list[dict[str, str]] = []
+        self._patterns: list[str] = []
+
+    # ── Credentials ──────────────────────────────────────────────
+
+    def record_credential(self, source_code: str, username: str, password: str) -> None:
+        with self._lock:
+            self._credentials.append({
+                "source": source_code,
+                "username": username,
+                "password": password,
+                "ts": datetime.now().isoformat(),
+            })
+
+    def get_credentials(self) -> list[dict[str, str]]:
+        with self._lock:
+            return list(self._credentials)
+
+    # ── Tech Stack ───────────────────────────────────────────────
+
+    def record_tech_stack(self, challenge_code: str, tech: list[str]) -> None:
+        with self._lock:
+            self._tech_stacks[challenge_code] = tech
+
+    def get_tech_stack(self, challenge_code: str) -> list[str]:
+        with self._lock:
+            return list(self._tech_stacks.get(challenge_code, []))
+
+    def find_challenges_by_tech(self, keyword: str) -> list[str]:
+        """Find challenge codes whose tech stack matches a keyword."""
+        kw = keyword.lower()
+        with self._lock:
+            return [
+                code for code, techs in self._tech_stacks.items()
+                if any(kw in t.lower() for t in techs)
+            ]
+
+    # ── Working Exploits ─────────────────────────────────────────
+
+    def record_working_exploit(self, code: str, method: str, detail: str) -> None:
+        with self._lock:
+            self._working_exploits.append({
+                "code": code,
+                "method": method,
+                "detail": detail[:200],
+                "ts": datetime.now().isoformat(),
+            })
+
+    def get_working_exploits(self) -> list[dict[str, str]]:
+        with self._lock:
+            return list(self._working_exploits)
+
+    # ── Common Patterns ──────────────────────────────────────────
+
+    def record_pattern(self, pattern: str) -> None:
+        with self._lock:
+            if pattern not in self._patterns:
+                self._patterns.append(pattern)
+
+    # ── Brief summary for injection into prompts ─────────────────
+
+    def get_brief(self) -> str:
+        """Return a concise summary suitable for injecting into agent context."""
+        parts: list[str] = []
+        with self._lock:
+            if self._credentials:
+                creds = [f"{c['username']}:{c['password']}(来源{c['source']})" for c in self._credentials[-5:]]
+                parts.append(f"已发现凭据: {', '.join(creds)}")
+            if self._working_exploits:
+                exps = [f"{e['code']}:{e['method']}" for e in self._working_exploits[-5:]]
+                parts.append(f"已成功方法: {', '.join(exps)}")
+            if self._patterns:
+                parts.append(f"共性模式: {'; '.join(self._patterns[-3:])}")
+        return "\n".join(parts)

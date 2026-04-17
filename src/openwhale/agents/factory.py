@@ -6,15 +6,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..util.cache import ResultCache
-from ..util.notes import PentestNotes
+from ..util.notes import GlobalIntel, PentestNotes
 from ..util.poc_index import PocIndex
 from ..util.vuln_kb import VulnKnowledgeBase
 from .deepagents_agent import DeepAgentsChallengeAgent
 from .openai_agent import OpenAIChallengeAgent
 
 
-def _init_shared_utils(config: dict[str, str]) -> tuple[PentestNotes, ResultCache, VulnKnowledgeBase, PocIndex]:
-    """初始化共享的笔记/缓存/知识库/POC索引实例。"""
+def _init_shared_utils(config: dict[str, str]) -> tuple[PentestNotes, ResultCache, VulnKnowledgeBase, PocIndex, GlobalIntel]:
+    """初始化共享的笔记/缓存/知识库/POC索引/全局情报实例。"""
     data_dir = Path(config.get("DATA_DIR", "data"))
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -22,13 +22,14 @@ def _init_shared_utils(config: dict[str, str]) -> tuple[PentestNotes, ResultCach
     cache = ResultCache(path=data_dir / "pentest_cache.json")
     vuln_kb = VulnKnowledgeBase()
     poc_index = PocIndex(cache_path=data_dir / "poc_index_cache.json")
-    return notes, cache, vuln_kb, poc_index
+    intel = GlobalIntel()
+    return notes, cache, vuln_kb, poc_index, intel
 
 
 def create_agent(config: dict[str, str], on_message: Callable[[str, str], None] | None = None):
     """根据配置创建智能体实例。"""
     backend = config.get("AGENT_BACKEND", "openai_compat").lower()
-    notes, cache, vuln_kb, poc_index = _init_shared_utils(config)
+    notes, cache, vuln_kb, poc_index, intel = _init_shared_utils(config)
 
     if backend in {"openai", "openai_compat", "minimax", "chat_completions"}:
         return OpenAIChallengeAgent(
@@ -41,6 +42,7 @@ def create_agent(config: dict[str, str], on_message: Callable[[str, str], None] 
             cache=cache,
             vuln_kb=vuln_kb,
             poc_index=poc_index,
+            intel=intel,
         )
 
     if backend in {"claude", "claude_code", "claude_sdk", "claude-agent-sdk"}:
@@ -52,6 +54,7 @@ def create_agent(config: dict[str, str], on_message: Callable[[str, str], None] 
             cache=cache,
             vuln_kb=vuln_kb,
             poc_index=poc_index,
+            intel=intel,
         )
 
     if backend == "deepagents":
@@ -62,6 +65,7 @@ def create_agent(config: dict[str, str], on_message: Callable[[str, str], None] 
             cache=cache,
             vuln_kb=vuln_kb,
             poc_index=poc_index,
+            intel=intel,
         )
 
     raise NotImplementedError(

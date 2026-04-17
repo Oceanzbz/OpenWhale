@@ -27,6 +27,7 @@ class ClaudeCodeChallengeAgent(BaseChallengeAgent):
         cache: ResultCache | None = None,
         vuln_kb: VulnKnowledgeBase | None = None,
         poc_index=None,
+        intel=None,
     ) -> None:
         model_name = config.get("CLAUDE_MODEL") or config.get("MODEL_ID", "ep-jsc7o0kw")
         super().__init__(
@@ -37,6 +38,7 @@ class ClaudeCodeChallengeAgent(BaseChallengeAgent):
             cache=cache,
             vuln_kb=vuln_kb,
             poc_index=poc_index,
+            intel=intel,
         )
         self.config = config
         self.model = model_name

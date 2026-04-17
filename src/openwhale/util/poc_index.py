@@ -1,4 +1,9 @@
-"""轻量 POC 知识库索引 — 扫描本地 Markdown/DOCX 文件构建倒排索引，支持关键词 / CVE / 产品检索。"""
+"""轻量 POC 知识库索引 — 扫描项目 kb/ 目录下的 Markdown 文件构建倒排索引，支持关键词 / CVE / 产品检索。
+
+路径存储约定:
+  索引中存储 **相对于项目根目录的路径** (如 "kb/awesome-poc/XXX.md")，
+  读取时动态拼接 _PROJECT_ROOT，确保在任何机器上都能正确定位文件。
+"""
 
 from __future__ import annotations
 
@@ -12,19 +17,15 @@ from typing import Any
 
 from loguru import logger
 
-# 文件头部最大读取字节数（用于提取摘要，避免读整个大文件）
 _HEAD_BYTES = 4096
 _CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 _CNVD_RE = re.compile(r"CNVD-\d{4}-\d+", re.IGNORECASE)
 _QVD_RE = re.compile(r"QVD-\d{4}-\d+", re.IGNORECASE)
 
-# 项目根目录（用于定位 kb/ 子目录）
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-# 默认知识库路径: 优先项目内 kb/ 目录（CVM部署），其次本地开发路径
 _KB_DIR_IN_PROJECT = _PROJECT_ROOT / "kb"
 _DEFAULT_KB_DIRS: list[str] = [
-    # 项目内 kb/ 分类目录（CVM 服务器部署用）
     str(_KB_DIR_IN_PROJECT / "awesome-poc"),
     str(_KB_DIR_IN_PROJECT / "poc-main"),
     str(_KB_DIR_IN_PROJECT / "hacktricks"),
@@ -33,16 +34,6 @@ _DEFAULT_KB_DIRS: list[str] = [
     str(_KB_DIR_IN_PROJECT / "ctf-writeup"),
     str(_KB_DIR_IN_PROJECT / "pentest-writeup"),
     str(_KB_DIR_IN_PROJECT / "personal-notes"),
-    # 本地开发路径（本机直接用，CVM 上不存在会自动跳过）
-    "/Volumes/T7mac/POC/Awesome-POC-1.0",
-    "/Volumes/T7mac/POC/POC-main/wpoc",
-    "/Volumes/T7mac/POC/hacktricks/src",
-    "/Volumes/T7mac/POC/Pentest_Note-master/wiki",
-    "/Volumes/T7mac/POC/web-sec-master",
-    "/Users/ocean/Cybersecurity/笔记",
-    "/Users/ocean/Cybersecurity/Blog/source/_posts/CTF",
-    "/Users/ocean/Cybersecurity/Blog/source/_posts/Java安全",
-    "/Users/ocean/Cybersecurity/Blog/source/_posts/攻防渗透",
 ]
 
 # 停用词（不加入索引的低价值词）
@@ -169,7 +160,10 @@ class PocIndex:
         tokens_from_body = _tokenize(summary)
         all_tokens = tokens_from_name | tokens_from_body
 
-        rel_path = str(fpath)
+        try:
+            rel_path = str(fpath.resolve().relative_to(_PROJECT_ROOT.resolve()))
+        except ValueError:
+            rel_path = str(fpath)
         category = self._infer_category(fpath)
 
         self._docs[doc_id] = {
@@ -180,7 +174,6 @@ class PocIndex:
         }
 
         for token in tokens_from_name:
-            self._inverted[token].add(doc_id)
             self._inverted[token].add(doc_id)
         for token in all_tokens:
             self._inverted[token].add(doc_id)
@@ -230,6 +223,16 @@ class PocIndex:
             self._inverted[k] = set(ids)
         self._next_id = data.get("next_id", len(self._docs))
 
+        # 校验：如果缓存中的路径是绝对路径（旧缓存），说明是过期的，强制重建
+        if self._docs:
+            sample_path = next(iter(self._docs.values()))["path"]
+            if sample_path.startswith("/") and not sample_path.startswith(str(_PROJECT_ROOT)):
+                logger.warning("缓存中包含无效的绝对路径，强制重建索引")
+                self._docs.clear()
+                self._inverted.clear()
+                self._next_id = 0
+                raise ValueError("Stale cache with absolute paths from another machine")
+
     # ── 检索 ─────────────────────────────────────────────────────
 
     def search(self, query: str, max_results: int = 8) -> str:
@@ -263,22 +266,35 @@ class PocIndex:
         parts: list[str] = [f"=== POC知识库检索: '{query}' (前{len(ranked)}条) ===\n"]
         for doc_id, score in ranked:
             doc = self._docs[doc_id]
+            abs_path = self._resolve_path(doc["path"])
             parts.append(f"📄 [{doc['category']}] {doc['name']}")
-            parts.append(f"   路径: {doc['path']}")
+            parts.append(f"   路径: {abs_path}")
             if doc["summary"]:
                 summary_lines = doc["summary"].split("\n")[:4]
                 parts.append(f"   摘要: {' | '.join(summary_lines)}")
             parts.append("")
 
-        parts.append(f"提示: 使用 read_poc_file 工具可读取具体 POC 文件的完整内容。")
+        parts.append("提示: 使用 read_poc_file 工具可读取具体 POC 文件的完整内容。")
         return "\n".join(parts)
+
+    @staticmethod
+    def _resolve_path(stored_path: str) -> str:
+        """将存储的路径解析为绝对路径。
+
+        支持相对路径(如 "kb/awesome-poc/XXX.md") 和绝对路径(向后兼容)。
+        """
+        p = Path(stored_path)
+        if p.is_absolute():
+            return stored_path
+        resolved = _PROJECT_ROOT / stored_path
+        return str(resolved)
 
     def read_file(self, filepath: str, max_chars: int = 6000) -> str:
         """读取指定 POC 文件的内容（截断到 max_chars）。"""
-        fp = Path(filepath)
+        fp = Path(self._resolve_path(filepath))
         if not fp.exists():
-            return f"文件不存在: {filepath}"
-        if not fp.suffix.lower() in (".md", ".txt", ".py", ".yaml", ".yml", ".json"):
+            return f"文件不存在: {filepath} (解析为: {fp})"
+        if fp.suffix.lower() not in (".md", ".txt", ".py", ".yaml", ".yml", ".json"):
             return f"不支持的文件类型: {fp.suffix}"
         try:
             content = fp.read_text(encoding="utf-8", errors="replace")

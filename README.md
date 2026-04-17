@@ -1,172 +1,236 @@
-# 🐋 OpenWhale - 渗透测试智能体
+# OpenWhale
 
-基于 OpenAI 兼容 SDK 构建的渗透测试 AI 智能体，用于参加腾讯云黑客松智能渗透挑战赛。
+> **LLM 驱动的自动化 CTF/Web 渗透测试智能体**  
+> 基于 DeepAgents + MCP 协议，具备并发攻击、持久化记忆、启发式方向推导能力。
 
-## 功能特性
+---
 
-- 🤖 **多智能体分工**：支持"侦察-检测-利用"流程，基于主从模式协作
-- 🔌 **MCP 协议接入**：通过标准 MCP 协议直接接入比赛平台
-- 📊 **实时 Web 监控**：极简 Web 前端，实时展示智能体运行过程
-- 📝 **完整日志追踪**：使用 loguru + rich，每次运行保存全量日志
-- 🔒 **环境变量配置**：API Key 等敏感信息通过环境变量注入，避免硬编码
+## 设计思想
+
+OpenWhale 将渗透测试的专家经验系统化，以 LLM 为决策核心，工具链为执行手段，实现对 Web 漏洞的自主发现与利用。
+
+**三大原则：**
+
+- **启发式驱动**：侦察发现自动映射攻击方向，而非硬编码规则
+- **上下文管理优先**：Python 脚本精确提取关键字段，笔记系统跨运行复用，拒绝上下文污染
+- **并发隔离**：最多同时攻击 3 道题，每道题子 Agent 完全隔离，互不干扰
+
+---
+
+## 核心能力
+
+| 模块 | 功能 |
+|------|------|
+| **三阶段流水线** | 侦察 → 利用 → 深挖（hard 题），每阶段独立子 Agent |
+| **攻击启发式** | 40+ 关键词规则，从侦察文本自动推导攻击方向（SSRF/SQLi/原型链/供应链等） |
+| **Skills 技能库** | Markdown 驱动的模块化知识库，按难度动态加载 payload 模板 |
+| **续攻学习** | 失败方向自动分类，续攻轮强制选择新方向，避免重复劳动 |
+| **三重 Flag 兜底** | auto-flag + API 探测脚本 + 静态路径批量探测 |
+| **持久化记忆** | 笔记/缓存/情报跨运行保留，重启后自动恢复上下文 |
+| **持续运行** | 完成所有题目前自动循环，支持后台 `nohup`/`screen` 运行 |
+
+---
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 环境要求
+
+- Python 3.12+
+- [uv](https://github.com/astral-sh/uv)（包管理）
+
+### 2. 安装
 
 ```bash
-# 使用 uv 安装依赖（推荐）
+git clone <repo_url> && cd OpenWhale-main-v2
 pip install uv
 uv sync
 ```
 
-### 2. 配置环境变量
+### 3. 配置
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填写以下必填项：
-# AGENT_TOKEN=<YOUR_AGENT_TOKEN>
-# SERVER_HOST=<SERVER_HOST>
-# AGENT_BACKEND=openai_compat
-# 切换 Claude Code SDK：AGENT_BACKEND=claude_code
-# 切换 DeepAgents：AGENT_BACKEND=deepagents
-# TOKENHUB_API_KEY=<YOUR_LLM_API_KEY>
-# CLAUDE_MODEL=<可选，默认沿用 MODEL_ID>
-# CLAUDE_PERMISSION_MODE=bypassPermissions
-# CLAUDE_ALLOWED_TOOLS=Bash,mcp__challenge__list_challenges
 ```
 
-### 3. 运行智能体
+编辑 `.env`，填写必填项：
+
+```env
+# ── 必填 ─────────────────────────────────────────
+AGENT_TOKEN=<比赛平台 Agent Token>
+SERVER_HOST=<比赛平台 Server Host（自动拼接 /mcp）>
+TOKENHUB_API_KEY=<OpenAI 兼容 API Key>
+
+# ── 模型配置 ──────────────────────────────────────
+MODEL_BASE_URL=https://tokenhub.tencentmaas.com/v1
+MODEL_NAME=MiniMax-M2.7
+MODEL_ID=ep-jsc7o0kw
+
+# ── 运行后端（推荐 deepagents）─────────────────────
+AGENT_BACKEND=deepagents
+
+# ── 回连 IP（Blind XSS / XXE OOB 等需要外带数据时使用）──
+CALLBACK_IP=<你的公网 IP>
+
+# ── 持续运行配置 ──────────────────────────────────
+AUTOPILOT_AGENT_COMMAND=".venv/bin/openwhale"
+AUTOPILOT_START_DELAY_SECONDS=10
+AUTOPILOT_CYCLE_INTERVAL_SECONDS=5
+AUTOPILOT_MAX_CYCLES=0
+```
+
+### 4. 运行
 
 ```bash
+# 前台运行（开发调试）
 uv run openwhale
 
+# 后台持续运行（推荐比赛时使用）
+nohup bash -c "set -a; source .env; set +a; .venv/bin/python scripts/delayed_autopilot.py" \
+  >> logs/autopilot.log 2>&1 &
 
-# 仅启动 Web 界面
+# 或使用 screen
+screen -dmS openwhale bash -c "set -a; source .env; set +a; \
+  .venv/bin/python scripts/delayed_autopilot.py >> logs/autopilot.log 2>&1"
+
+# 仅启动 Web 监控界面
 uv run openwhale-web
 ```
 
-运行后：
-- 智能体将自动连接 MCP 服务器，按比赛流程执行赛题并输出执行报告
-- Web 界面在 `http://localhost:8080` 实时展示运行过程
+运行后访问 `http://localhost:8080` 实时监控进度。
 
-### 4. 离线持续运行（延时遥控）
-
-当你希望离线持续跑题：脚本启动后先等待 60 秒，然后反复调用智能体，直到全部赛题完成才退出。
-
-```bash
-uv run python scripts/delayed_autopilot.py
-```
-
-可通过 `.env` 调整行为：
-- `AUTOPILOT_START_DELAY_SECONDS`：首轮启动前延时（默认 60）
-- `AUTOPILOT_CYCLE_INTERVAL_SECONDS`：轮次间隔（默认 5）
-- `AUTOPILOT_MAX_CYCLES`：最大轮次，`0` 为不限
-- `AUTOPILOT_AGENT_COMMAND`：每轮实际执行命令（默认 `uv run openwhale`）
+---
 
 ## 项目结构
 
 ```
-OpenWhale/
+OpenWhale-main-v2/
 ├── src/openwhale/
-│   ├── main.py           # 主入口（启动器）
-│   ├── agent.py          # 兼容导出（保留旧导入路径）
+│   ├── main.py                     # 主入口
 │   ├── agents/
-│   │   ├── base.py       # 智能体基类（含本地工具分发、笔记/缓存/RAG集成）
-│   │   ├── factory.py    # 智能体工厂（自动注入共享组件）
-│   │   ├── openai_agent.py # OpenAI 兼容实现（含 Bash 工具）
-│   │   ├── deepagents_agent.py # DeepAgents 实现（并发子智能体 + 全工具集）
-│   │   ├── claude_code_agent.py # Claude Code SDK 实现
-│   │   ├── prompts.py    # 共享提示词（OWASP Top 10 + CVE + 工具指南）
-│   │   └── tooling.py    # 工具配置辅助（MCP Server 构建）
+│   │   ├── deepagents_agent.py     # 核心：并发主从架构（v10b）
+│   │   ├── attack_heuristics.py    # 启发式攻击方向推导引擎
+│   │   ├── bash_executor.py        # 异步 Bash 执行器
+│   │   ├── base.py                 # 智能体基类
+│   │   ├── factory.py              # 智能体工厂
+│   │   ├── openai_agent.py         # OpenAI 兼容实现
+│   │   └── claude_code_agent.py    # Claude Code SDK 实现
+│   ├── prompts/
+│   │   └── builder.py              # 分层 Prompt 构建器（难度感知）
+│   ├── skills/                     # Markdown 技能知识库
+│   │   ├── core/
+│   │   │   ├── identity.md         # 角色定义
+│   │   │   ├── rules.md            # 15 条行为约束
+│   │   │   └── available_tools.md  # 工具清单（含 CVM 渗透工具）
+│   │   ├── methodology/
+│   │   │   ├── recon.md            # 侦察方法论
+│   │   │   ├── exploit.md          # 漏洞利用方法论
+│   │   │   └── ctf_bypass.md       # CTF 实战绕过技巧
+│   │   └── vulnerabilities/
+│   │       ├── owasp_top10.md      # OWASP Top 10 检查清单
+│   │       ├── cve_patterns.md     # CVE 利用模式
+│   │       └── advanced_exploit.md # 高级利用手册（SSRF/原型链/XXE OOB 等）
 │   ├── web/
-│   │   ├── app.py        # Web 前端（FastAPI + SSE）
-│   │   └── templates/
-│   │       └── index.html
+│   │   └── app.py                  # FastAPI + SSE 实时监控
 │   └── util/
-│       ├── __init__.py
-│       ├── mcp_client.py     # MCP 协议客户端
-│       ├── logging_config.py # 日志配置（loguru + rich）
-│       ├── notes.py          # 持久化笔记系统（跨运行复用发现）
-│       ├── cache.py          # 结果缓存系统（避免重复侦察）
-│       └── vuln_kb.py        # 漏洞知识库/RAG（内置 payload + 工具模板）
-├── data/                 # 持久化数据（笔记、缓存 - 运行时自动创建）
-├── logs/                 # 运行时自动创建的日志目录
-├── .env.example          # 环境变量模板
-├── pyproject.toml        # 项目依赖配置（uv）
-└── README.md
+│       ├── mcp_client.py           # MCP 协议客户端
+│       ├── notes.py                # 持久化笔记系统
+│       ├── cache.py                # 侦察结果缓存
+│       └── vuln_kb.py              # 漏洞知识库 + POC
+├── scripts/
+│   └── delayed_autopilot.py        # 持续运行控制脚本
+├── data/                           # 运行时持久化数据（笔记/缓存）
+├── logs/                           # 运行日志
+├── .env.example                    # 环境变量模板
+├── ARCHITECTURE.md                 # 架构与演进详细报告
+└── pyproject.toml
 ```
 
-## 环境变量说明
+---
+
+## 攻击能力覆盖
+
+**自动识别并利用的漏洞类型：**
+
+| 类别 | 具体漏洞 |
+|------|---------|
+| 注入类 | SQL 注入（含 WAF 绕过）、命令注入、SSTI（Jinja2 深度利用）、NoSQL 注入、LDAP 注入 |
+| SSRF | 基础 SSRF、协议利用（file/gopher/dict）、IP 变体绕过、内网服务探测与利用 |
+| 反序列化 | Python Pickle RCE、YAML 反序列化、Java 反序列化（impacket）|
+| 原型链污染 | Node.js `__proto__`、PyDash `set_`/`merge` 路径 |
+| XXE | 基础实体读文件、参数实体 OOB 外带、OOXML（docx/xlsx）XXE |
+| XSS | 反射/存储 XSS、Blind XSS（支持回连收 Cookie）|
+| 身份认证 | 默认凭据、SQL 注入绕过、JWT 伪造（alg:none/弱密钥）、Magic Hash、Session 篡改 |
+| 访问控制 | IDOR、强制浏览、API 未授权访问、HTTP 方法/路径变体绕过 |
+| 文件操作 | LFI/路径穿越、文件上传绕过（MIME/扩展名/Magic Bytes）|
+| 供应链 | 依赖混淆、构建流水线注入、镜像替换 |
+| 内网渗透 | IP 段批量扫描、Redis/MySQL 未授权、内部 API 枚举 |
+| CVE 利用 | Log4Shell、Spring4Shell、Shiro 反序列化、WebLogic、ThinkPHP、Nacos 等 |
+
+---
+
+## CVM 渗透工具链
+
+在 CVM（`ubuntu@101.35.19.108`）上已预装：
+
+```
+隧道代理:  chisel  frpc/frps  proxychains4  socat
+端口扫描:  nmap  masscan
+目录枚举:  ffuf  gobuster  nikto
+漏洞利用:  sqlmap  hydra
+数据库:    redis-cli  mysql
+网络:      curl  nc/netcat  sshpass  dig  whois
+Python:    requests  paramiko  lxml  impacket  pyyaml
+```
+
+---
+
+## 环境变量完整说明
 
 | 变量名 | 必填 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `AGENT_TOKEN` | ✅ | - | 竞赛平台 Agent Token（MCP 鉴权） |
-| `SERVER_HOST` | ✅ | - | 竞赛平台 Server Host（自动拼接 `/mcp`） |
-| `TOKENHUB_API_KEY` | ✅ | - | OpenAI 兼容模型 API Key |
-| `MCP_SERVER_URL` | ❌ | 自动拼接 | 可手动覆盖 MCP 地址 |
-| `AGENT_BACKEND` | ❌ | `openai_compat` | 智能体基座实现选择（含 `deepagents`） |
-| `MODEL_BASE_URL` | ❌ | `https://tokenhub.tencentmaas.com/v1` | OpenAI 兼容模型网关地址 |
-| `MODEL_NAME` | ❌ | `MiniMax-M2.7` | 模型展示名称 |
-| `MODEL_ID` | ❌ | `ep-jsc7o0kw` | 实际调用的模型 ID |
-| `DEEPAGENTS_RECURSION_LIMIT` | ❌ | `64` | DeepAgents 图递归上限 |
-| `DEEPAGENTS_TIMEOUT_SECONDS` | ❌ | `300` | DeepAgents 单次运行超时（秒） |
-| `DEEPAGENTS_REPEAT_CALL_LIMIT` | ❌ | `4` | 相同工具+参数允许重复调用次数 |
-| `DEEPAGENTS_BASH_TIMEOUT_SECONDS` | ❌ | `120` | Bash 工具命令超时（秒） |
-| `DEEPAGENTS_BASH_MAX_OUTPUT_CHARS` | ❌ | `8000` | Bash 工具输出截断长度 |
-| `DEEPAGENTS_TRACE_ENABLED` | ❌ | `false` | 是否输出 trace 阶段日志 |
-| `DEEPAGENTS_TRACE_VERBOSE` | ❌ | `false` | 是否输出更细的原始事件流 |
-| `CLAUDE_MODEL` | ❌ | `MODEL_ID` | Claude Code SDK 使用的模型（默认沿用 MiniMax 模型 ID） |
-| `CLAUDE_CLI_PATH` | ❌ | - | Claude Code CLI 可执行文件路径 |
-| `CLAUDE_API_KEY` | ❌ | `MODEL_API_KEY` | Claude SDK 专用 API Key（可覆盖） |
-| `CLAUDE_BASE_URL` | ❌ | `MODEL_BASE_URL` | Claude SDK 专用网关地址（可覆盖） |
-| `CHALLENGE_MCP_SERVER_NAME` | ❌ | `challenge` | 主赛题 MCP 服务名，用于默认工具命名 |
-| `CLAUDE_TOOLS_PRESET` | ❌ | `claude_code` | Claude Code 工具集预设 |
-| `CLAUDE_PERMISSION_MODE` | ❌ | `bypassPermissions` | Claude SDK 工具权限模式 |
-| `CLAUDE_ALLOWED_TOOLS` | ❌ | 自动生成 | 允许自动执行的工具（逗号分隔） |
-| `CLAUDE_DISALLOWED_TOOLS` | ❌ | - | 禁用工具（逗号分隔） |
-| `EXTRA_MCP_SERVERS_JSON` | ❌ | - | 额外 MCP Server JSON 配置（对象） |
-| `EXTRA_MCP_SERVERS_FILE` | ❌ | - | 额外 MCP Server 配置文件路径 |
+|--------|:----:|--------|------|
+| `AGENT_TOKEN` | ✅ | — | 竞赛平台 Agent Token（MCP 鉴权）|
+| `SERVER_HOST` | ✅ | — | 竞赛平台 Server Host |
+| `TOKENHUB_API_KEY` | ✅ | — | OpenAI 兼容 API Key |
+| `AGENT_BACKEND` | ❌ | `deepagents` | 智能体基座（`deepagents` / `openai_compat` / `claude_code`）|
+| `MODEL_BASE_URL` | ❌ | `https://tokenhub.tencentmaas.com/v1` | 模型网关地址 |
+| `MODEL_NAME` | ❌ | `MiniMax-M2.7` | 模型显示名称 |
+| `MODEL_ID` | ❌ | `ep-jsc7o0kw` | 实际调用模型 ID |
+| `CALLBACK_IP` | ❌ | `YOUR_PUBLIC_IP` | 公网回连 IP（Blind XSS/XXE OOB）|
+| `DEEPAGENTS_RECURSION_LIMIT` | ❌ | `400` | DeepAgents 图递归上限 |
+| `DEEPAGENTS_TIMEOUT_SECONDS` | ❌ | `1800` | 单次运行超时（秒）|
+| `DEEPAGENTS_BASH_TIMEOUT_SECONDS` | ❌ | `120` | Bash 命令超时（秒）|
+| `DEEPAGENTS_BASH_MAX_OUTPUT_CHARS` | ❌ | `8000` | Bash 输出截断长度 |
+| `AUTOPILOT_AGENT_COMMAND` | ❌ | `.venv/bin/openwhale` | 每轮实际执行命令 |
+| `AUTOPILOT_START_DELAY_SECONDS` | ❌ | `10` | 首轮启动前延时（秒）|
+| `AUTOPILOT_CYCLE_INTERVAL_SECONDS` | ❌ | `5` | 轮次间隔（秒）|
+| `AUTOPILOT_MAX_CYCLES` | ❌ | `0` | 最大轮次（0 = 不限）|
 | `LOG_LEVEL` | ❌ | `INFO` | 日志级别 |
 | `WEB_ENABLED` | ❌ | `true` | 是否启动 Web 界面 |
-| `WEB_HOST` | ❌ | `0.0.0.0` | Web 服务监听地址 |
-| `WEB_PORT` | ❌ | `8080` | Web 服务端口 |
+| `WEB_PORT` | ❌ | `8080` | Web 监控端口 |
+
+---
 
 ## 技术栈
 
-- **运行时**：Python 3.12+ / [uv](https://github.com/astral-sh/uv)
-- **AI 基座**：[OpenAI Python SDK](https://github.com/openai/openai-python)
-- **Deep Agent 编排**：[deepagents](https://github.com/langchain-ai/deepagents) + [LangChain](https://github.com/langchain-ai/langchain)
-- **MCP 协议**：[Model Context Protocol Python SDK](https://github.com/modelcontextprotocol/python-sdk)
-- **日志**：[loguru](https://github.com/Delgan/loguru) + [rich](https://github.com/Textualize/rich)
-- **Web**：[FastAPI](https://fastapi.tiangolo.com/) + Server-Sent Events
+| 组件 | 技术 |
+|------|------|
+| 语言/运行时 | Python 3.12+ / [uv](https://github.com/astral-sh/uv) |
+| LLM 接入 | OpenAI Python SDK（兼容 MiniMax/其他 OpenAI 兼容接口）|
+| Agent 编排 | [deepagents](https://github.com/langchain-ai/deepagents) + LangGraph |
+| 平台接入 | [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/python-sdk) |
+| Web 监控 | FastAPI + Server-Sent Events |
+| 日志 | loguru + rich |
 
-### Claude Code 扩展示例
+---
 
-可通过额外 MCP 接入 RAG 或渗透扫描器（与主挑战 MCP 并行）：
+## 深入了解
 
-```json
-{
-	"rag": {
-		"type": "http",
-		"url": "http://127.0.0.1:9001/mcp"
-	},
-	"scanner": {
-		"type": "stdio",
-		"command": "python",
-		"args": ["-m", "my_scanner_mcp"]
-	}
-}
-```
+完整的架构设计、版本演进过程和未来改进计划，请阅读：
 
-将上面 JSON 写入文件后设置：
+📄 **[ARCHITECTURE.md](./ARCHITECTURE.md)**
 
-```bash
-EXTRA_MCP_SERVERS_FILE=/path/to/mcp_servers.json
-```
+---
 
-### 关于 MiniMax 与 Claude Code SDK
+## 许可
 
-- `claude-agent-sdk`/Claude Code CLI 会校验模型名，常见 OpenAI 风格模型标识（如 `ep-...`、`MiniMax-...`）通常会被拒绝。
-- 如果目标是稳定调用 MiniMax（OpenAI 兼容接口），建议使用 `AGENT_BACKEND=openai_compat`。
-- 若必须使用 `AGENT_BACKEND=claude_code`，请提供 Anthropic 兼容网关，并设置可识别的 Claude 模型名。
+本项目为竞赛用途开发，仅限授权环境内使用。请勿用于未授权的渗透测试。

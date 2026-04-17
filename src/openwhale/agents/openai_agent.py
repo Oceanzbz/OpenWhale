@@ -62,6 +62,7 @@ class OpenAIChallengeAgent(BaseChallengeAgent):
         cache: ResultCache | None = None,
         vuln_kb: VulnKnowledgeBase | None = None,
         poc_index=None,
+        intel=None,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -71,6 +72,7 @@ class OpenAIChallengeAgent(BaseChallengeAgent):
             cache=cache,
             vuln_kb=vuln_kb,
             poc_index=poc_index,
+            intel=intel,
         )
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model

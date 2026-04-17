@@ -61,10 +61,10 @@ def _build_config() -> dict[str, Any]:
     config = {
         "agent_token": os.getenv("AGENT_TOKEN", "").strip(),
         "mcp_url": mcp_url,
-        "start_delay": int(os.getenv("AUTOPILOT_START_DELAY_SECONDS", "60")),
+        "start_delay": int(os.getenv("AUTOPILOT_START_DELAY_SECONDS", "10")),
         "cycle_interval": int(os.getenv("AUTOPILOT_CYCLE_INTERVAL_SECONDS", "5")),
         "max_cycles": int(os.getenv("AUTOPILOT_MAX_CYCLES", "0")),
-        "command": os.getenv("AUTOPILOT_AGENT_COMMAND", "uv run openwhale").strip(),
+        "command": os.getenv("AUTOPILOT_AGENT_COMMAND", ".venv/bin/openwhale").strip(),
     }
 
     missing = [k for k in ("agent_token", "mcp_url") if not config[k]]
@@ -92,14 +92,13 @@ async def _main() -> int:
 
     cycle = 0
     while True:
-        data = await _list_challenges(config["mcp_url"], config["agent_token"])
-        total = int(data.get("total_challenges", 0))
-        solved = int(data.get("solved_challenges", 0))
-        print(f"[autopilot] 当前完成进度: {solved}/{total}")
-
-        if total > 0 and solved >= total:
-            print("[autopilot] 所有赛题已完成，停止循环。")
-            return 0
+        try:
+            data = await _list_challenges(config["mcp_url"], config["agent_token"])
+            total = int(data.get("total_challenges", 0))
+            solved = int(data.get("solved_challenges", 0))
+            print(f"[autopilot] 当前完成进度: {solved}/{total}")
+        except Exception as exc:
+            print(f"[autopilot] list_challenges 异常: {exc}，仍然启动agent")
 
         cycle += 1
         max_cycles = config["max_cycles"]
