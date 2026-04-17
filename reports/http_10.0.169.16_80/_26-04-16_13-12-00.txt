@@ -1,5 +1,0 @@
-# Dirsearch started Thu Apr 16 13:13:35 2026 as: /usr/lib/python3/dist-packages/dirsearch/dirsearch.py -u http://10.0.169.16:80 -t 10 -i 200,302
-
-302   189B   http://10.0.169.16/dashboard    -> REDIRECTS TO: /
-302   189B   http://10.0.169.16/logout    -> REDIRECTS TO: /
-200     3KB  http://10.0.169.16/register
