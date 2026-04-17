@@ -19,6 +19,7 @@ env/
 
 # 日志文件（运行时生成）
 logs/
+reports/
 
 # IDE
 .idea/
